@@ -89,7 +89,10 @@ const ctx = canvas.getContext("2d");
 const startButton = document.getElementById("startButton");
 
 let handLandmarker = null;
+
 let isPinching = false;
+let wasPinching = false;
+
 let smoothX = null;
 let smoothY = null;
 let lostFrames = 0;
@@ -157,6 +160,7 @@ function resetInputState(){
     smoothY = null;
     lostFrames = 0;
     isPinching = false;
+    wasPinching = false;
 }
 
 function pinchDetected(landmarks){
@@ -177,24 +181,31 @@ function pinchDetected(landmarks){
     return isPinching;
 }
 
-function addRiverPoint(x,y){
+function addRiverPoint(x,y,forceNewStart=false){
     const last = riverPath[riverPath.length - 1];
 
-    if(last){
-        const dist = Math.hypot(x - last.x, y - last.y);
-        if(dist < 2) return;
+    if(forceNewStart || !last){
+        riverPath.push({
+            x,
+            y,
+            breakBefore: forceNewStart
+        });
+        return;
+    }
 
-        const steps = Math.max(1, Math.floor(dist / 5));
+    const dist = Math.hypot(x - last.x, y - last.y);
 
-        for(let i=1; i<=steps; i++){
-            const t = i / steps;
-            riverPath.push({
-                x:last.x + (x - last.x) * t,
-                y:last.y + (y - last.y) * t
-            });
-        }
-    }else{
-        riverPath.push({x,y});
+    if(dist < 2) return;
+
+    const steps = Math.max(1, Math.floor(dist / 5));
+
+    for(let i=1; i<=steps; i++){
+        const t = i / steps;
+        riverPath.push({
+            x:last.x + (x - last.x) * t,
+            y:last.y + (y - last.y) * t,
+            breakBefore:false
+        });
     }
 
     if(riverPath.length > 7000){
@@ -213,9 +224,15 @@ function makeSmoothPath(points){
         const curr = points[i];
         const next = points[i+1];
 
+        if(curr.breakBefore || next.breakBefore){
+            smoothed.push(curr);
+            continue;
+        }
+
         smoothed.push({
             x:(prev.x + curr.x * 2 + next.x) / 4,
-            y:(prev.y + curr.y * 2 + next.y) / 4
+            y:(prev.y + curr.y * 2 + next.y) / 4,
+            breakBefore:false
         });
     }
 
@@ -236,20 +253,28 @@ function drawNaturalRiver(){
 
 function drawRiverStroke(path, width, color){
     ctx.beginPath();
-    ctx.moveTo(path[0].x, path[0].y);
 
-    for(let i=1; i<path.length-1; i++){
-        const curr = path[i];
+    let drawingSegment = false;
+
+    for(let i=0; i<path.length; i++){
+        const p = path[i];
+
+        if(i === 0 || p.breakBefore || !drawingSegment){
+            ctx.moveTo(p.x, p.y);
+            drawingSegment = true;
+            continue;
+        }
+
         const next = path[i+1];
 
-        const midX = (curr.x + next.x) / 2;
-        const midY = (curr.y + next.y) / 2;
-
-        ctx.quadraticCurveTo(curr.x, curr.y, midX, midY);
+        if(next && !next.breakBefore){
+            const midX = (p.x + next.x) / 2;
+            const midY = (p.y + next.y) / 2;
+            ctx.quadraticCurveTo(p.x, p.y, midX, midY);
+        }else{
+            ctx.lineTo(p.x, p.y);
+        }
     }
-
-    const last = path[path.length-1];
-    ctx.lineTo(last.x,last.y);
 
     ctx.lineWidth = width;
     ctx.lineCap = "round";
@@ -272,6 +297,9 @@ function drawWaterHighlights(path){
     for(let i=10; i<path.length-10; i+=42){
         const p = path[i];
         const q = path[Math.min(i+6, path.length-1)];
+
+        if(p.breakBefore || q.breakBefore) continue;
+
         const wobble = Math.sin(time + i * 0.07) * 5;
 
         ctx.beginPath();
@@ -312,12 +340,30 @@ function drawPinchPen(x,y){
     ctx.restore();
 }
 
+function getValidRiverIndices(){
+    const indices = [];
+
+    for(let i=0; i<riverPath.length-1; i++){
+        if(!riverPath[i].breakBefore && !riverPath[i+1].breakBefore){
+            indices.push(i);
+        }
+    }
+
+    return indices;
+}
+
 function getPointOnRiver(offset){
     if(riverPath.length < 2) return null;
 
-    const i = Math.floor(offset);
-    if(i >= riverPath.length - 1) return null;
+    const valid = getValidRiverIndices();
 
+    if(valid.length < 1) return null;
+
+    const idx = Math.floor(offset);
+
+    if(idx >= valid.length) return null;
+
+    const i = valid[idx];
     const p = riverPath[i];
     const next = riverPath[i + 1];
 
@@ -326,36 +372,43 @@ function getPointOnRiver(offset){
         next.x - p.x
     );
 
-    return {p,next,angle,index:i};
+    return {p,next,angle,index:i,max:valid.length};
 }
 
-function addSwimmer(type){
+function addSwimmer(type,count=1){
     if(riverPath.length < 2) return;
 
-    const base = {
-        type,
-        offset:0,
-        alive:true,
-        size:1
-    };
+    const validCount = getValidRiverIndices().length;
+    if(validCount < 2) return;
 
-    if(type === "fish"){
-        base.speed = 0.78;
-        base.size = 1;
+    count = Math.max(1, Math.min(50, count));
+
+    for(let i=0; i<count; i++){
+        const base = {
+            type,
+            offset: -i * 28,
+            alive:true,
+            size:1
+        };
+
+        if(type === "fish"){
+            base.speed = 0.78 + Math.random() * 0.25;
+            base.size = 0.75 + Math.random() * 0.35;
+        }
+
+        if(type === "ship"){
+            base.speed = 0.42 + Math.random() * 0.16;
+            base.size = 0.95 + Math.random() * 0.25;
+        }
+
+        if(type === "flower"){
+            base.speed = 0.28 + Math.random() * 0.18;
+            base.size = 0.75 + Math.random() * 0.35;
+            base.spin = Math.random() * Math.PI * 2;
+        }
+
+        swimmers.push(base);
     }
-
-    if(type === "ship"){
-        base.speed = 0.48;
-        base.size = 1.15;
-    }
-
-    if(type === "flower"){
-        base.speed = 0.36;
-        base.size = 1;
-        base.spin = Math.random() * Math.PI * 2;
-    }
-
-    swimmers.push(base);
 }
 
 function updateSwimmers(){
@@ -366,13 +419,14 @@ function updateSwimmers(){
 
         s.offset += s.speed;
 
-        if(s.offset >= riverPath.length - 2){
+        if(s.offset < 0) continue;
+
+        const pos = getPointOnRiver(s.offset);
+
+        if(!pos){
             s.alive = false;
             continue;
         }
-
-        const pos = getPointOnRiver(s.offset);
-        if(!pos) continue;
 
         if(s.type === "fish"){
             drawVectorFish(pos.p.x, pos.p.y, pos.angle, s.size);
@@ -508,10 +562,21 @@ function detectHandAndDraw(){
             smoothY = smoothY * 0.92 + y * 0.08;
         }
 
-        if(pinchDetected(landmarks)){
+        const pinchingNow = pinchDetected(landmarks);
+
+        if(pinchingNow){
             drawPinchPen(smoothX, smoothY);
-            addRiverPoint(smoothX, smoothY);
+
+            const newPinchStart = !wasPinching;
+
+            addRiverPoint(
+                smoothX,
+                smoothY,
+                newPinchStart
+            );
         }
+
+        wasPinching = pinchingNow;
 
     }else{
         lostFrames++;
@@ -538,23 +603,60 @@ function clearRiver(){
     resetInputState();
 }
 
+function parseCommand(buffer){
+    const match = buffer.match(/(fish|ship|flower)(\d*)$/);
+
+    if(!match) return null;
+
+    const type = match[1];
+    const count = match[2] ? parseInt(match[2],10) : 1;
+
+    return {
+        type,
+        count: Number.isFinite(count) ? count : 1
+    };
+}
+
 function handleTypedCommand(key){
-    if(key.length !== 1 || !/[a-zA-Z]/.test(key)) return;
+    if(key === "Backspace"){
+        typedBuffer = typedBuffer.slice(0,-1);
+        return;
+    }
+
+    if(key === "Enter" || key === " "){
+        const command = parseCommand(typedBuffer);
+
+        if(command){
+            addSwimmer(command.type, command.count);
+            typedBuffer = "";
+        }
+
+        return;
+    }
+
+    if(key.length !== 1 || !/[a-zA-Z0-9]/.test(key)) return;
 
     typedBuffer += key.toLowerCase();
 
-    if(typedBuffer.length > 12){
-        typedBuffer = typedBuffer.slice(-12);
+    if(typedBuffer.length > 20){
+        typedBuffer = typedBuffer.slice(-20);
+    }
+
+    const command = parseCommand(typedBuffer);
+
+    if(command && /\d$/.test(typedBuffer)){
+        addSwimmer(command.type, command.count);
+        typedBuffer = "";
     }
 
     if(typedBuffer.endsWith("fish")){
-        addSwimmer("fish");
+        addSwimmer("fish", 1);
         typedBuffer = "";
     }else if(typedBuffer.endsWith("ship")){
-        addSwimmer("ship");
+        addSwimmer("ship", 1);
         typedBuffer = "";
     }else if(typedBuffer.endsWith("flower")){
-        addSwimmer("flower");
+        addSwimmer("flower", 1);
         typedBuffer = "";
     }
 }
