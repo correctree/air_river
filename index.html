@@ -2,244 +2,510 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Air River</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Air River AR</title>
+
 <style>
-html,body{margin:0;overflow:hidden;background:#00111f}
-#video,#canvas{position:absolute;top:0;left:0}
-#video{transform:scaleX(-1);opacity:.15}
-#info{
-position:absolute;top:10px;left:10px;z-index:10;
-color:white;background:rgba(0,0,0,.5);
-padding:10px;border-radius:8px;font-family:sans-serif}
+:root{
+    --camera-blur: 6px;      /* 背景ぼかしの強さ。0px〜12px程度で調整 */
+    --camera-opacity: 1;     /* カメラ映像の透明度 */
+}
+
+html,body{
+    margin:0;
+    padding:0;
+    overflow:hidden;
+    background:#000;
+    touch-action:none;
+}
+
+#stage{
+    position:fixed;
+    inset:0;
+    overflow:hidden;
+    background:#000;
+}
+
+#video,
+#canvas{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+}
+
+#video{
+    object-fit:cover;
+    transform:scaleX(-1);
+    opacity:var(--camera-opacity);
+    filter:blur(var(--camera-blur)) brightness(0.95) saturate(0.9);
+}
+
+#canvas{
+    z-index:2;
+    pointer-events:none;
+}
+
+#startButton{
+    position:fixed;
+    left:50%;
+    top:50%;
+    transform:translate(-50%,-50%);
+    z-index:10;
+    padding:14px 22px;
+    border:none;
+    border-radius:999px;
+    font-size:16px;
+    color:white;
+    background:rgba(0,0,0,0.65);
+    backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px);
+}
+
+#startButton.hidden{
+    display:none;
+}
 </style>
 </head>
+
 <body>
-<div id="info">
-🤏 ピンチで川を描く<br>
-🐟 魚が川を泳ぐ<br>
-⌨ Cキーでリセット
+
+<div id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
 </div>
 
-<video id="video" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
+<button id="startButton">Start Camera</button>
 
 <script type="module">
 import {
-  HandLandmarker,
-  FilesetResolver
+    HandLandmarker,
+    FilesetResolver
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const startButton = document.getElementById("startButton");
 
-let handLandmarker;
+let handLandmarker = null;
 let isPinching = false;
-let smoothX=null, smoothY=null;
-let lostFrames=0;
+let smoothX = null;
+let smoothY = null;
+let lostFrames = 0;
 
-const riverPath=[];
+const riverPath = [];
 
-const fishes=[
- {offset:0,speed:0.6},
- {offset:120,speed:0.8},
- {offset:240,speed:0.7}
+const swimmers = [
+    { type:"fish", offset:0,   speed:0.72, size:1.00 },
+    { type:"fish", offset:120, speed:0.58, size:0.82 },
+    { type:"fish", offset:260, speed:0.88, size:0.68 }
 ];
 
-async function initCamera(){
- const stream=await navigator.mediaDevices.getUserMedia({video:true});
- video.srcObject=stream;
- await new Promise(r=>video.onloadedmetadata=r);
- await video.play();
+// 将来的に追加しやすい構造。
+// 例: {type:"leaf", offset:80, speed:0.5, size:1}
+// 例: {type:"boat", offset:180, speed:0.35, size:1}
 
- canvas.width=video.videoWidth;
- canvas.height=video.videoHeight;
+async function initCamera(){
+    const stream = await navigator.mediaDevices.getUserMedia({
+        video:{
+            facingMode:"user",
+            width:{ideal:1280},
+            height:{ideal:720}
+        },
+        audio:false
+    });
+
+    video.srcObject = stream;
+
+    await new Promise(resolve=>{
+        video.onloadedmetadata = resolve;
+    });
+
+    await video.play();
+    resizeCanvas();
 }
 
 async function initHandTracking(){
- const vision=await FilesetResolver.forVisionTasks(
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
- );
+    const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+    );
 
- handLandmarker=await HandLandmarker.createFromOptions(
-  vision,
-  {
-   baseOptions:{
-    modelAssetPath:
-    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
-   },
-   runningMode:"VIDEO",
-   numHands:1
-  }
- );
+    handLandmarker = await HandLandmarker.createFromOptions(
+        vision,
+        {
+            baseOptions:{
+                modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+            },
+            runningMode:"VIDEO",
+            numHands:1,
+            minHandDetectionConfidence:0.35,
+            minHandPresenceConfidence:0.35,
+            minTrackingConfidence:0.35
+        }
+    );
+}
+
+function resizeCanvas(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+function resetInputState(){
+    smoothX = null;
+    smoothY = null;
+    lostFrames = 0;
+    isPinching = false;
 }
 
 function pinchDetected(landmarks){
- const thumb=landmarks[4];
- const index=landmarks[8];
+    const thumb = landmarks[4];
+    const index = landmarks[8];
 
- const d=Math.hypot(
-  thumb.x-index.x,
-  thumb.y-index.y
- );
+    const d = Math.hypot(
+        thumb.x - index.x,
+        thumb.y - index.y
+    );
 
- if(isPinching){
-  if(d>0.12) isPinching=false;
- }else{
-  if(d<0.08) isPinching=true;
- }
+    if(isPinching){
+        if(d > 0.12) isPinching = false;
+    }else{
+        if(d < 0.08) isPinching = true;
+    }
 
- return isPinching;
+    return isPinching;
 }
 
-function drawRiver(){
+function addRiverPoint(x,y){
+    const last = riverPath[riverPath.length - 1];
 
- if(riverPath.length<2) return;
+    if(last){
+        const dist = Math.hypot(x - last.x, y - last.y);
 
- ctx.beginPath();
- ctx.moveTo(riverPath[0].x, riverPath[0].y);
+        if(dist < 2) return;
 
- for(let i=1;i<riverPath.length;i++){
-  ctx.lineTo(riverPath[i].x, riverPath[i].y);
- }
+        const steps = Math.max(1, Math.floor(dist / 5));
 
- ctx.lineWidth=28;
- ctx.strokeStyle="rgba(120,200,255,0.35)";
- ctx.lineCap="round";
- ctx.lineJoin="round";
- ctx.stroke();
+        for(let i=1; i<=steps; i++){
+            const t = i / steps;
+            riverPath.push({
+                x:last.x + (x - last.x) * t,
+                y:last.y + (y - last.y) * t
+            });
+        }
+    }else{
+        riverPath.push({x,y});
+    }
 
- ctx.beginPath();
- ctx.moveTo(riverPath[0].x, riverPath[0].y);
-
- for(let i=1;i<riverPath.length;i++){
-  ctx.lineTo(riverPath[i].x, riverPath[i].y);
- }
-
- ctx.lineWidth=16;
- ctx.strokeStyle="rgba(70,170,255,0.95)";
- ctx.lineCap="round";
- ctx.lineJoin="round";
- ctx.stroke();
+    if(riverPath.length > 7000){
+        riverPath.splice(0, riverPath.length - 7000);
+    }
 }
 
-function drawFish(x,y,angle){
+function makeSmoothPath(points){
+    if(points.length < 3) return points;
 
- ctx.save();
- ctx.translate(x,y);
- ctx.rotate(angle);
+    const smoothed = [];
+    smoothed.push(points[0]);
 
- ctx.fillStyle="#ffb347";
- ctx.beginPath();
- ctx.ellipse(0,0,16,10,0,0,Math.PI*2);
- ctx.fill();
+    for(let i=1; i<points.length-1; i++){
+        const prev = points[i-1];
+        const curr = points[i];
+        const next = points[i+1];
 
- ctx.beginPath();
- ctx.moveTo(-14,0);
- ctx.lineTo(-26,-8);
- ctx.lineTo(-26,8);
- ctx.closePath();
- ctx.fill();
+        smoothed.push({
+            x:(prev.x + curr.x * 2 + next.x) / 4,
+            y:(prev.y + curr.y * 2 + next.y) / 4
+        });
+    }
 
- ctx.fillStyle="#000";
- ctx.beginPath();
- ctx.arc(8,-2,1.8,0,Math.PI*2);
- ctx.fill();
-
- ctx.restore();
+    smoothed.push(points[points.length-1]);
+    return smoothed;
 }
 
-function updateFish(){
+function drawNaturalRiver(){
+    if(riverPath.length < 2) return;
 
- if(riverPath.length<20) return;
+    const path = makeSmoothPath(riverPath);
 
- for(const fish of fishes){
+    drawRiverStroke(path, 34, "rgba(170,225,255,0.22)");
+    drawRiverStroke(path, 24, "rgba(90,185,255,0.48)");
+    drawRiverStroke(path, 13, "rgba(40,145,230,0.92)");
 
-  fish.offset += fish.speed;
+    drawWaterHighlights(path);
+}
 
-  if(fish.offset >= riverPath.length-2){
-   fish.offset = 0;
-  }
+function drawRiverStroke(path, width, color){
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
 
-  const i=Math.floor(fish.offset);
+    for(let i=1; i<path.length-1; i++){
+        const curr = path[i];
+        const next = path[i+1];
 
-  const p=riverPath[i];
-  const next=riverPath[Math.min(i+1, riverPath.length-1)];
+        const midX = (curr.x + next.x) / 2;
+        const midY = (curr.y + next.y) / 2;
 
-  const angle=Math.atan2(
-   next.y-p.y,
-   next.x-p.x
-  );
+        ctx.quadraticCurveTo(curr.x, curr.y, midX, midY);
+    }
 
-  drawFish(p.x,p.y,angle);
- }
+    const last = path[path.length-1];
+    ctx.lineTo(last.x,last.y);
+
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = color;
+    ctx.stroke();
+}
+
+function drawWaterHighlights(path){
+    if(path.length < 20) return;
+
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(230,250,255,0.55)";
+
+    const time = performance.now() * 0.002;
+
+    for(let i=10; i<path.length-10; i+=42){
+        const p = path[i];
+        const q = path[Math.min(i+6, path.length-1)];
+
+        const wobble = Math.sin(time + i * 0.07) * 5;
+
+        ctx.beginPath();
+        ctx.moveTo(p.x + wobble, p.y - 4);
+        ctx.quadraticCurveTo(
+            (p.x + q.x) / 2,
+            (p.y + q.y) / 2 - 8,
+            q.x - wobble,
+            q.y - 4
+        );
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+function getPointOnRiver(offset){
+    if(riverPath.length < 2) return null;
+
+    const i = Math.floor(offset) % (riverPath.length - 1);
+    const p = riverPath[i];
+    const next = riverPath[i + 1];
+
+    const angle = Math.atan2(
+        next.y - p.y,
+        next.x - p.x
+    );
+
+    return {p,next,angle,index:i};
+}
+
+function updateSwimmers(){
+    if(riverPath.length < 25) return;
+
+    for(const s of swimmers){
+        s.offset += s.speed;
+
+        if(s.offset >= riverPath.length - 2){
+            s.offset = 0;
+        }
+
+        const pos = getPointOnRiver(s.offset);
+        if(!pos) continue;
+
+        if(s.type === "fish"){
+            drawVectorFish(pos.p.x, pos.p.y, pos.angle, s.size);
+        }else if(s.type === "leaf"){
+            drawLeaf(pos.p.x, pos.p.y, pos.angle, s.size);
+        }else if(s.type === "boat"){
+            drawBoat(pos.p.x, pos.p.y, pos.angle, s.size);
+        }
+    }
+}
+
+function drawVectorFish(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(255,178,72,0.96)";
+    ctx.beginPath();
+    ctx.ellipse(0,0,15,8.5,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,132,50,0.95)";
+    ctx.beginPath();
+    ctx.moveTo(-13,0);
+    ctx.lineTo(-25,-8);
+    ctx.lineTo(-25,8);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(255,240,190,0.75)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-4,-7);
+    ctx.quadraticCurveTo(2,0,-4,7);
+    ctx.stroke();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(8,-2.2,1.8,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawLeaf(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle + Math.sin(performance.now()*0.003)*0.4);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(90,190,95,0.85)";
+    ctx.beginPath();
+    ctx.ellipse(0,0,11,5,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(230,255,220,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-8,0);
+    ctx.lineTo(8,0);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function drawBoat(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(130,80,45,0.9)";
+    ctx.beginPath();
+    ctx.moveTo(-16,-5);
+    ctx.lineTo(16,-5);
+    ctx.lineTo(9,6);
+    ctx.lineTo(-9,6);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,245,210,0.9)";
+    ctx.beginPath();
+    ctx.moveTo(0,-6);
+    ctx.lineTo(0,-22);
+    ctx.lineTo(11,-8);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function detectHandAndDraw(){
+    if(!handLandmarker) return;
+
+    const result = handLandmarker.detectForVideo(
+        video,
+        performance.now()
+    );
+
+    if(result.landmarks.length){
+        lostFrames = 0;
+
+        const landmarks = result.landmarks[0];
+        const tip = landmarks[8];
+
+        const x = window.innerWidth - tip.x * window.innerWidth;
+        const y = tip.y * window.innerHeight;
+
+        if(smoothX === null){
+            smoothX = x;
+            smoothY = y;
+        }else{
+            smoothX = smoothX * 0.92 + x * 0.08;
+            smoothY = smoothY * 0.92 + y * 0.08;
+        }
+
+        if(pinchDetected(landmarks)){
+            addRiverPoint(smoothX, smoothY);
+        }
+
+    }else{
+        lostFrames++;
+
+        if(lostFrames > 18){
+            resetInputState();
+        }
+    }
 }
 
 function render(){
+    ctx.clearRect(0,0,window.innerWidth,window.innerHeight);
 
- ctx.clearRect(0,0,canvas.width,canvas.height);
+    detectHandAndDraw();
+    drawNaturalRiver();
+    updateSwimmers();
 
- const result=handLandmarker.detectForVideo(
-  video,
-  performance.now()
- );
-
- if(result.landmarks.length){
-
-  lostFrames=0;
-
-  const landmarks=result.landmarks[0];
-  const tip=landmarks[8];
-
-  const x=canvas.width-(tip.x*canvas.width);
-  const y=tip.y*canvas.height;
-
-  if(smoothX===null){
-   smoothX=x;
-   smoothY=y;
-  }else{
-   smoothX=smoothX*0.93+x*0.07;
-   smoothY=smoothY*0.93+y*0.07;
-  }
-
-  if(pinchDetected(landmarks)){
-
-   riverPath.push({
-    x:smoothX,
-    y:smoothY
-   });
-
-   if(riverPath.length>5000){
-    riverPath.shift();
-   }
-
-  }
-
- }else{
-  lostFrames++;
- }
-
- drawRiver();
- updateFish();
-
- requestAnimationFrame(render);
+    requestAnimationFrame(render);
 }
+
+function clearRiver(){
+    riverPath.length = 0;
+    resetInputState();
+
+    for(let i=0; i<swimmers.length; i++){
+        swimmers[i].offset = i * 120;
+    }
+}
+
+window.addEventListener("resize", resizeCanvas);
 
 window.addEventListener("keydown",(e)=>{
-
- if(e.key==="c" || e.key==="C"){
-  riverPath.length=0;
- }
+    if(e.key === "c" || e.key === "C"){
+        clearRiver();
+    }
 });
 
+window.addEventListener("touchstart",(e)=>{
+    if(e.touches.length >= 3){
+        clearRiver();
+    }
+},{passive:true});
+
 async function start(){
- await initCamera();
- await initHandTracking();
- render();
+    try{
+        startButton.classList.add("hidden");
+        await initCamera();
+        await initHandTracking();
+        render();
+    }catch(error){
+        console.error(error);
+        startButton.classList.remove("hidden");
+        startButton.textContent = "Camera Error / Retry";
+    }
 }
 
-start();
+startButton.addEventListener("click", start);
+
+if(!/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)){
+    start();
+}
 </script>
 </body>
 </html>
