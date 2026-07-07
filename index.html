@@ -102,6 +102,42 @@ let typedBuffer = "";
 const riverPath = [];
 const swimmers = [];
 
+/*
+  入力ワード辞書。
+  例：
+  fish3 + Enter   → 魚3匹
+  duck2 + Enter   → アヒル2羽
+  leaf5 + Enter   → 葉っぱ5枚
+  star4 + Enter   → 星4つ
+  apple2 + Enter  → りんご2つ
+*/
+const wordMap = {
+    fish:"fish",
+    fishes:"fish",
+    koi:"fish",
+    salmon:"fish",
+
+    ship:"ship",
+    boat:"ship",
+    yacht:"ship",
+
+    flower:"flower",
+    rose:"flower",
+    sakura:"flower",
+
+    leaf:"leaf",
+    leaves:"leaf",
+
+    duck:"duck",
+    bird:"bird",
+
+    star:"star",
+    moon:"moon",
+
+    apple:"apple",
+    orange:"orange"
+};
+
 async function initCamera(){
     const stream = await navigator.mediaDevices.getUserMedia({
         video:{
@@ -193,15 +229,6 @@ function addRiverPoint(x,y,forceNewStart=false){
         return;
     }
 
-    if(last.breakBefore && riverPath.length === 1){
-        riverPath.push({
-            x,
-            y,
-            breakBefore:false
-        });
-        return;
-    }
-
     const dist = Math.hypot(x - last.x, y - last.y);
 
     if(dist < 2) return;
@@ -257,7 +284,8 @@ function drawNaturalRiver(){
     drawRiverStroke(path, 34, "rgba(170,225,255,0.22)");
     drawRiverStroke(path, 24, "rgba(90,185,255,0.48)");
     drawRiverStroke(path, 13, "rgba(40,145,230,0.92)");
-    drawWaterHighlights(path);
+
+    // 白い水面ラインは削除しました。
 }
 
 function drawRiverStroke(path, width, color){
@@ -302,39 +330,6 @@ function drawRiverStroke(path, width, color){
     ctx.lineJoin = "round";
     ctx.strokeStyle = color;
     ctx.stroke();
-}
-
-function drawWaterHighlights(path){
-    if(path.length < 20) return;
-
-    ctx.save();
-    ctx.globalAlpha = 0.45;
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(230,250,255,0.55)";
-
-    const time = performance.now() * 0.002;
-
-    for(let i=10; i<path.length-10; i+=42){
-        const p = path[i];
-        const q = path[Math.min(i+6, path.length-1)];
-
-        if(p.breakBefore || q.breakBefore) continue;
-
-        const wobble = Math.sin(time + i * 0.07) * 5;
-
-        ctx.beginPath();
-        ctx.moveTo(p.x + wobble, p.y - 4);
-        ctx.quadraticCurveTo(
-            (p.x + q.x) / 2,
-            (p.y + q.y) / 2 - 8,
-            q.x - wobble,
-            q.y - 4
-        );
-        ctx.stroke();
-    }
-
-    ctx.restore();
 }
 
 function drawPinchPen(x,y){
@@ -420,30 +415,29 @@ function addSwimmer(type,count=1){
     const travel = flattenRiverForTravel();
     if(travel.length < 2) return;
 
-    count = Math.max(1, Math.min(50, count));
+    count = Math.max(1, Math.min(80, count));
 
     for(let i=0; i<count; i++){
         const base = {
             type,
             offset: -i * 30,
             alive:true,
-            size:1
+            size:1,
+            spin:Math.random() * Math.PI * 2
         };
 
         if(type === "fish"){
             base.speed = 0.78 + Math.random() * 0.25;
             base.size = 0.75 + Math.random() * 0.35;
-        }
-
-        if(type === "ship"){
+        }else if(type === "ship"){
             base.speed = 0.42 + Math.random() * 0.16;
             base.size = 0.95 + Math.random() * 0.25;
-        }
-
-        if(type === "flower"){
+        }else if(type === "flower"){
             base.speed = 0.28 + Math.random() * 0.18;
             base.size = 0.75 + Math.random() * 0.35;
-            base.spin = Math.random() * Math.PI * 2;
+        }else{
+            base.speed = 0.35 + Math.random() * 0.25;
+            base.size = 0.8 + Math.random() * 0.3;
         }
 
         swimmers.push(base);
@@ -467,14 +461,8 @@ function updateSwimmers(){
             continue;
         }
 
-        if(s.type === "fish"){
-            drawVectorFish(pos.p.x, pos.p.y, pos.angle, s.size);
-        }else if(s.type === "ship"){
-            drawShip(pos.p.x, pos.p.y, pos.angle, s.size);
-        }else if(s.type === "flower"){
-            drawFlower(pos.p.x, pos.p.y, pos.angle, s.size, s.spin);
-            s.spin += 0.035;
-        }
+        drawObjectByType(s.type,pos.p.x,pos.p.y,pos.angle,s.size,s.spin);
+        s.spin += 0.035;
     }
 
     for(let i=swimmers.length-1; i>=0; i--){
@@ -482,6 +470,20 @@ function updateSwimmers(){
             swimmers.splice(i,1);
         }
     }
+}
+
+function drawObjectByType(type,x,y,angle,scale,spin){
+    if(type === "fish") drawVectorFish(x,y,angle,scale);
+    else if(type === "ship") drawShip(x,y,angle,scale);
+    else if(type === "flower") drawFlower(x,y,angle,scale,spin);
+    else if(type === "leaf") drawLeaf(x,y,angle,scale,spin);
+    else if(type === "duck") drawDuck(x,y,angle,scale);
+    else if(type === "bird") drawBird(x,y,angle,scale);
+    else if(type === "star") drawStar(x,y,angle,scale,spin);
+    else if(type === "moon") drawMoon(x,y,angle,scale);
+    else if(type === "apple") drawApple(x,y,angle,scale);
+    else if(type === "orange") drawOrange(x,y,angle,scale);
+    else drawCircleObject(x,y,angle,scale);
 }
 
 function drawVectorFish(x,y,angle,scale=1){
@@ -576,6 +578,181 @@ function drawFlower(x,y,angle,scale=1,spin=0){
     ctx.restore();
 }
 
+function drawLeaf(x,y,angle,scale=1,spin=0){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle + Math.sin(spin)*0.7);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(90,190,95,0.88)";
+    ctx.beginPath();
+    ctx.ellipse(0,0,13,6,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(230,255,220,0.7)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-10,0);
+    ctx.lineTo(10,0);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function drawDuck(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(255,220,60,0.95)";
+    ctx.beginPath();
+    ctx.ellipse(0,3,15,9,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(10,-7,7,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,125,40,0.95)";
+    ctx.beginPath();
+    ctx.moveTo(16,-7);
+    ctx.lineTo(25,-10);
+    ctx.lineTo(25,-4);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(12,-9,1.5,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawBird(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.strokeStyle = "rgba(245,245,255,0.95)";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+
+    ctx.beginPath();
+    ctx.moveTo(-14,0);
+    ctx.quadraticCurveTo(-6,-10,0,0);
+    ctx.quadraticCurveTo(6,-10,14,0);
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function drawStar(x,y,angle,scale=1,spin=0){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(spin);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(255,230,80,0.95)";
+    ctx.beginPath();
+
+    for(let i=0; i<10; i++){
+        const r = i % 2 === 0 ? 14 : 6;
+        const a = -Math.PI/2 + i * Math.PI / 5;
+        const px = Math.cos(a) * r;
+        const py = Math.sin(a) * r;
+        if(i === 0) ctx.moveTo(px,py);
+        else ctx.lineTo(px,py);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawMoon(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(245,240,180,0.95)";
+    ctx.beginPath();
+    ctx.arc(0,0,14,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath();
+    ctx.arc(6,-3,14,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = "source-over";
+
+    ctx.restore();
+}
+
+function drawApple(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(220,40,55,0.95)";
+    ctx.beginPath();
+    ctx.arc(-5,2,9,0,Math.PI*2);
+    ctx.arc(5,2,9,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(100,60,20,0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0,-8);
+    ctx.lineTo(3,-16);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(60,170,80,0.9)";
+    ctx.beginPath();
+    ctx.ellipse(8,-13,7,3,0.3,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawOrange(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(255,145,40,0.96)";
+    ctx.beginPath();
+    ctx.arc(0,0,13,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,190,80,0.65)";
+    ctx.beginPath();
+    ctx.arc(-4,-5,4,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawCircleObject(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.beginPath();
+    ctx.arc(0,0,10,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
 function detectHandAndDraw(){
     if(!handLandmarker) return;
 
@@ -597,7 +774,6 @@ function detectHandAndDraw(){
         const newPinchStart = pinchingNow && !wasPinching;
 
         if(newPinchStart){
-            // 再ピンチ時は必ず現在位置を新しい起点にする。
             smoothX = rawX;
             smoothY = rawY;
         }else if(smoothX === null){
@@ -646,13 +822,20 @@ function clearRiver(){
 }
 
 function parseCommand(buffer){
-    const match = buffer.match(/^(fish|ship|flower)(\d+)$/);
+    const match = buffer.match(/^([a-zA-Z]+)(\d+)$/);
 
     if(!match) return null;
 
+    const word = match[1].toLowerCase();
+    const count = parseInt(match[2],10);
+
+    const type = wordMap[word];
+
+    if(!type) return null;
+
     return {
-        type:match[1],
-        count:parseInt(match[2],10)
+        type,
+        count
     };
 }
 
@@ -677,8 +860,8 @@ function handleTypedCommand(key){
 
     typedBuffer += key.toLowerCase();
 
-    if(typedBuffer.length > 20){
-        typedBuffer = typedBuffer.slice(-20);
+    if(typedBuffer.length > 24){
+        typedBuffer = typedBuffer.slice(-24);
     }
 }
 
