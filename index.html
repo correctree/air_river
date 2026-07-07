@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Air River AR</title>
+<title>Air River Semantic Network</title>
 
 <style>
 :root{
@@ -100,43 +100,150 @@ let lostFrames = 0;
 let typedBuffer = "";
 
 const riverPath = [];
-const swimmers = [];
+const entities = [];
 
 /*
-  入力ワード辞書。
-  例：
-  fish3 + Enter   → 魚3匹
-  duck2 + Enter   → アヒル2羽
-  leaf5 + Enter   → 葉っぱ5枚
-  star4 + Enter   → 星4つ
-  apple2 + Enter  → りんご2つ
+  Semantic Network
+  ----------------
+  word -> concept -> visual behavior
+
+  例:
+  salmon3 + Enter
+  salmon -> aquatic_animal -> fish visual + swim behavior
+
+  例:
+  rose5 + Enter
+  rose -> plant_flower -> flower visual + drift behavior
+
+  GitHub Pagesでそのまま動くように、外部AI APIは使わず内蔵辞書で意味分類します。
 */
-const wordMap = {
-    fish:"fish",
-    fishes:"fish",
-    koi:"fish",
-    salmon:"fish",
 
-    ship:"ship",
-    boat:"ship",
-    yacht:"ship",
+const semanticNetwork = {
+    aquatic_animal:{
+        visual:"fish",
+        behavior:"swim",
+        words:[
+            "fish","fishes","salmon","tuna","trout","carp","koi","goldfish",
+            "sardine","mackerel","eel","catfish","bass","cod","herring",
+            "shark","whale","dolphin","orca","seal","otter","turtle",
+            "crab","shrimp","lobster","octopus","squid","jellyfish","seahorse"
+        ]
+    },
 
-    flower:"flower",
-    rose:"flower",
-    sakura:"flower",
+    water_bird:{
+        visual:"duck",
+        behavior:"float",
+        words:[
+            "duck","ducks","swan","goose","geese","pelican","seagull",
+            "heron","crane","kingfisher"
+        ]
+    },
 
-    leaf:"leaf",
-    leaves:"leaf",
+    flying_bird:{
+        visual:"bird",
+        behavior:"fly",
+        words:[
+            "bird","birds","sparrow","pigeon","crow","raven","eagle",
+            "hawk","owl","swallow","swifts","parrot"
+        ]
+    },
 
-    duck:"duck",
-    bird:"bird",
+    flower:{
+        visual:"flower",
+        behavior:"drift_spin",
+        words:[
+            "flower","flowers","rose","tulip","lily","lotus","sakura",
+            "cherryblossom","daisy","sunflower","cosmos","hydrangea",
+            "iris","violet","peony","camellia","lavender"
+        ]
+    },
 
-    star:"star",
-    moon:"moon",
+    leaf:{
+        visual:"leaf",
+        behavior:"drift_spin",
+        words:[
+            "leaf","leaves","maple","ginkgo","oak","willow","bamboo",
+            "grass","fern","moss","clover","ivy"
+        ]
+    },
 
-    apple:"apple",
-    orange:"orange"
+    vessel:{
+        visual:"ship",
+        behavior:"sail",
+        words:[
+            "ship","ships","boat","boats","yacht","canoe","raft",
+            "ferry","sailboat","paperboat","submarine","ark"
+        ]
+    },
+
+    celestial:{
+        visual:"star",
+        behavior:"glow",
+        words:[
+            "star","stars","moon","sun","planet","comet","meteor",
+            "galaxy","space","cosmos"
+        ]
+    },
+
+    weather:{
+        visual:"drop",
+        behavior:"fall",
+        words:[
+            "rain","raindrop","drop","water","snow","snowflake",
+            "cloud","mist","fog","storm","wind"
+        ]
+    },
+
+    fruit:{
+        visual:"fruit",
+        behavior:"drift",
+        words:[
+            "apple","orange","lemon","peach","pear","grape","melon",
+            "banana","cherry","strawberry","plum","persimmon"
+        ]
+    },
+
+    emotion:{
+        visual:"heart",
+        behavior:"float",
+        words:[
+            "love","heart","joy","happy","happiness","sad","sadness",
+            "dream","hope","memory","peace","wish","smile"
+        ]
+    },
+
+    music:{
+        visual:"music",
+        behavior:"float",
+        words:[
+            "music","sound","song","melody","note","rhythm","tone",
+            "voice","sing","piano","guitar","drum","flute"
+        ]
+    },
+
+    myth:{
+        visual:"dragon",
+        behavior:"swim",
+        words:[
+            "dragon","unicorn","phoenix","mermaid","fairy","spirit",
+            "monster","kaiju","ghost","yokai"
+        ]
+    }
 };
+
+function buildWordIndex(){
+    const index = {};
+
+    for(const [concept,data] of Object.entries(semanticNetwork)){
+        for(const word of data.words){
+            index[word] = concept;
+        }
+    }
+
+    return index;
+}
+
+const wordIndex = buildWordIndex();
 
 async function initCamera(){
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -284,8 +391,6 @@ function drawNaturalRiver(){
     drawRiverStroke(path, 34, "rgba(170,225,255,0.22)");
     drawRiverStroke(path, 24, "rgba(90,185,255,0.48)");
     drawRiverStroke(path, 13, "rgba(40,145,230,0.92)");
-
-    // 白い水面ラインは削除しました。
 }
 
 function drawRiverStroke(path, width, color){
@@ -411,93 +516,153 @@ function getPointOnRiver(offset){
     return {p,next,angle,max:travel.length};
 }
 
-function addSwimmer(type,count=1){
+function resolveWordToConcept(word){
+    word = word.toLowerCase();
+
+    if(wordIndex[word]){
+        return wordIndex[word];
+    }
+
+    // 簡易推論：辞書に完全一致しない場合の語尾・部分一致。
+    if(word.endsWith("fish")) return "aquatic_animal";
+    if(word.includes("boat") || word.includes("ship")) return "vessel";
+    if(word.endsWith("flower") || word.includes("rose")) return "flower";
+    if(word.endsWith("leaf") || word.endsWith("leaves")) return "leaf";
+    if(word.includes("bird")) return "flying_bird";
+    if(word.includes("star")) return "celestial";
+    if(word.includes("rain") || word.includes("snow") || word.includes("cloud")) return "weather";
+    if(word.includes("music") || word.includes("song")) return "music";
+    if(word.includes("love") || word.includes("dream")) return "emotion";
+
+    return null;
+}
+
+function addEntityFromConcept(concept,count=1,sourceWord=""){
     const travel = flattenRiverForTravel();
     if(travel.length < 2) return;
+
+    const data = semanticNetwork[concept];
+    if(!data) return;
 
     count = Math.max(1, Math.min(80, count));
 
     for(let i=0; i<count; i++){
-        const base = {
-            type,
-            offset: -i * 30,
+        const entity = {
+            concept,
+            visual:data.visual,
+            behavior:data.behavior,
+            sourceWord,
+            offset:-i * 30,
             alive:true,
-            size:1,
-            spin:Math.random() * Math.PI * 2
+            size:0.8 + Math.random() * 0.35,
+            spin:Math.random() * Math.PI * 2,
+            phase:Math.random() * Math.PI * 2
         };
 
-        if(type === "fish"){
-            base.speed = 0.78 + Math.random() * 0.25;
-            base.size = 0.75 + Math.random() * 0.35;
-        }else if(type === "ship"){
-            base.speed = 0.42 + Math.random() * 0.16;
-            base.size = 0.95 + Math.random() * 0.25;
-        }else if(type === "flower"){
-            base.speed = 0.28 + Math.random() * 0.18;
-            base.size = 0.75 + Math.random() * 0.35;
+        if(data.behavior === "swim"){
+            entity.speed = 0.72 + Math.random() * 0.35;
+        }else if(data.behavior === "sail"){
+            entity.speed = 0.38 + Math.random() * 0.16;
+        }else if(data.behavior === "fly"){
+            entity.speed = 0.55 + Math.random() * 0.32;
+        }else if(data.behavior === "glow"){
+            entity.speed = 0.25 + Math.random() * 0.18;
+        }else if(data.behavior === "fall"){
+            entity.speed = 0.32 + Math.random() * 0.25;
         }else{
-            base.speed = 0.35 + Math.random() * 0.25;
-            base.size = 0.8 + Math.random() * 0.3;
+            entity.speed = 0.28 + Math.random() * 0.24;
         }
 
-        swimmers.push(base);
+        entities.push(entity);
     }
 }
 
-function updateSwimmers(){
+function updateEntities(){
     if(riverPath.length < 3) return;
 
-    for(const s of swimmers){
-        if(!s.alive) continue;
+    for(const e of entities){
+        if(!e.alive) continue;
 
-        s.offset += s.speed;
+        e.offset += e.speed;
 
-        if(s.offset < 0) continue;
+        if(e.offset < 0) continue;
 
-        const pos = getPointOnRiver(s.offset);
+        const pos = getPointOnRiver(e.offset);
 
         if(!pos){
-            s.alive = false;
+            e.alive = false;
             continue;
         }
 
-        drawObjectByType(s.type,pos.p.x,pos.p.y,pos.angle,s.size,s.spin);
-        s.spin += 0.035;
+        let x = pos.p.x;
+        let y = pos.p.y;
+        let angle = pos.angle;
+
+        if(e.behavior === "fly"){
+            y += Math.sin(performance.now()*0.006 + e.phase) * 18 - 24;
+        }
+
+        if(e.behavior === "float"){
+            y += Math.sin(performance.now()*0.004 + e.phase) * 5;
+        }
+
+        if(e.behavior === "fall"){
+            y += Math.sin(performance.now()*0.003 + e.phase) * 9;
+            angle += Math.sin(performance.now()*0.004 + e.phase) * 0.5;
+        }
+
+        drawVisual(e.visual,x,y,angle,e.size,e.spin,e);
+        e.spin += 0.035;
     }
 
-    for(let i=swimmers.length-1; i>=0; i--){
-        if(!swimmers[i].alive){
-            swimmers.splice(i,1);
+    for(let i=entities.length-1; i>=0; i--){
+        if(!entities[i].alive){
+            entities.splice(i,1);
         }
     }
 }
 
-function drawObjectByType(type,x,y,angle,scale,spin){
-    if(type === "fish") drawVectorFish(x,y,angle,scale);
-    else if(type === "ship") drawShip(x,y,angle,scale);
-    else if(type === "flower") drawFlower(x,y,angle,scale,spin);
-    else if(type === "leaf") drawLeaf(x,y,angle,scale,spin);
-    else if(type === "duck") drawDuck(x,y,angle,scale);
-    else if(type === "bird") drawBird(x,y,angle,scale);
-    else if(type === "star") drawStar(x,y,angle,scale,spin);
-    else if(type === "moon") drawMoon(x,y,angle,scale);
-    else if(type === "apple") drawApple(x,y,angle,scale);
-    else if(type === "orange") drawOrange(x,y,angle,scale);
+function drawVisual(visual,x,y,angle,scale,spin,entity){
+    if(visual === "fish") drawFish(x,y,angle,scale,entity);
+    else if(visual === "ship") drawShip(x,y,angle,scale);
+    else if(visual === "flower") drawFlower(x,y,angle,scale,spin);
+    else if(visual === "leaf") drawLeaf(x,y,angle,scale,spin);
+    else if(visual === "duck") drawDuck(x,y,angle,scale);
+    else if(visual === "bird") drawBird(x,y,angle,scale);
+    else if(visual === "star") drawStar(x,y,angle,scale,spin);
+    else if(visual === "drop") drawDrop(x,y,angle,scale,spin);
+    else if(visual === "fruit") drawFruit(x,y,angle,scale,entity.sourceWord);
+    else if(visual === "heart") drawHeart(x,y,angle,scale,spin);
+    else if(visual === "music") drawMusicNote(x,y,angle,scale,spin);
+    else if(visual === "dragon") drawDragon(x,y,angle,scale);
     else drawCircleObject(x,y,angle,scale);
 }
 
-function drawVectorFish(x,y,angle,scale=1){
+function drawFish(x,y,angle,scale=1,entity=null){
     ctx.save();
     ctx.translate(x,y);
     ctx.rotate(angle);
     ctx.scale(scale,scale);
 
-    ctx.fillStyle = "rgba(255,178,72,0.96)";
+    let body = "rgba(255,178,72,0.96)";
+    let tail = "rgba(255,132,50,0.95)";
+
+    if(entity && (entity.sourceWord === "shark" || entity.sourceWord === "whale" || entity.sourceWord === "dolphin")){
+        body = "rgba(120,170,205,0.96)";
+        tail = "rgba(90,135,175,0.95)";
+    }
+
+    if(entity && (entity.sourceWord === "koi" || entity.sourceWord === "goldfish")){
+        body = "rgba(255,120,80,0.96)";
+        tail = "rgba(255,210,130,0.95)";
+    }
+
+    ctx.fillStyle = body;
     ctx.beginPath();
-    ctx.ellipse(0,0,15,8.5,0,0,Math.PI*2);
+    ctx.ellipse(0,0,16,8.5,0,0,Math.PI*2);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(255,132,50,0.95)";
+    ctx.fillStyle = tail;
     ctx.beginPath();
     ctx.moveTo(-13,0);
     ctx.lineTo(-25,-8);
@@ -673,68 +838,111 @@ function drawStar(x,y,angle,scale=1,spin=0){
     ctx.restore();
 }
 
-function drawMoon(x,y,angle,scale=1){
+function drawDrop(x,y,angle,scale=1,spin=0){
     ctx.save();
     ctx.translate(x,y);
-    ctx.rotate(angle);
+    ctx.rotate(angle + Math.sin(spin)*0.4);
     ctx.scale(scale,scale);
 
-    ctx.fillStyle = "rgba(245,240,180,0.95)";
+    ctx.fillStyle = "rgba(160,220,255,0.9)";
     ctx.beginPath();
-    ctx.arc(0,0,14,0,Math.PI*2);
-    ctx.fill();
-
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.beginPath();
-    ctx.arc(6,-3,14,0,Math.PI*2);
-    ctx.fill();
-
-    ctx.globalCompositeOperation = "source-over";
-
-    ctx.restore();
-}
-
-function drawApple(x,y,angle,scale=1){
-    ctx.save();
-    ctx.translate(x,y);
-    ctx.rotate(angle);
-    ctx.scale(scale,scale);
-
-    ctx.fillStyle = "rgba(220,40,55,0.95)";
-    ctx.beginPath();
-    ctx.arc(-5,2,9,0,Math.PI*2);
-    ctx.arc(5,2,9,0,Math.PI*2);
-    ctx.fill();
-
-    ctx.strokeStyle = "rgba(100,60,20,0.95)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0,-8);
-    ctx.lineTo(3,-16);
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(60,170,80,0.9)";
-    ctx.beginPath();
-    ctx.ellipse(8,-13,7,3,0.3,0,Math.PI*2);
+    ctx.moveTo(0,-15);
+    ctx.quadraticCurveTo(14,2,0,16);
+    ctx.quadraticCurveTo(-14,2,0,-15);
     ctx.fill();
 
     ctx.restore();
 }
 
-function drawOrange(x,y,angle,scale=1){
+function drawFruit(x,y,angle,scale=1,word="apple"){
     ctx.save();
     ctx.translate(x,y);
     ctx.rotate(angle);
     ctx.scale(scale,scale);
 
-    ctx.fillStyle = "rgba(255,145,40,0.96)";
+    let color = "rgba(220,40,55,0.95)";
+    if(word === "orange") color = "rgba(255,145,40,0.96)";
+    if(word === "lemon") color = "rgba(245,230,70,0.96)";
+    if(word === "grape") color = "rgba(125,80,190,0.96)";
+    if(word === "banana") color = "rgba(245,220,80,0.96)";
+
+    ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(0,0,13,0,Math.PI*2);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(255,190,80,0.65)";
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
     ctx.beginPath();
     ctx.arc(-4,-5,4,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawHeart(x,y,angle,scale=1,spin=0){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(spin*0.3);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(255,80,120,0.92)";
+    ctx.beginPath();
+    ctx.moveTo(0,12);
+    ctx.bezierCurveTo(-22,-4,-12,-18,0,-8);
+    ctx.bezierCurveTo(12,-18,22,-4,0,12);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawMusicNote(x,y,angle,scale=1,spin=0){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(Math.sin(spin)*0.3);
+    ctx.scale(scale,scale);
+
+    ctx.fillStyle = "rgba(210,180,255,0.95)";
+    ctx.beginPath();
+    ctx.arc(-5,8,6,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillRect(0,-18,4,28);
+
+    ctx.beginPath();
+    ctx.moveTo(4,-18);
+    ctx.quadraticCurveTo(18,-12,15,-4);
+    ctx.lineTo(11,-5);
+    ctx.quadraticCurveTo(12,-10,4,-13);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawDragon(x,y,angle,scale=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(angle);
+    ctx.scale(scale,scale);
+
+    ctx.strokeStyle = "rgba(70,220,150,0.95)";
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+
+    ctx.beginPath();
+    ctx.moveTo(-24,0);
+    ctx.quadraticCurveTo(-10,-15,4,0);
+    ctx.quadraticCurveTo(14,12,26,-4);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(70,220,150,0.95)";
+    ctx.beginPath();
+    ctx.arc(27,-5,6,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(29,-7,1.5,0,Math.PI*2);
     ctx.fill();
 
     ctx.restore();
@@ -810,14 +1018,14 @@ function render(){
 
     detectHandAndDraw();
     drawNaturalRiver();
-    updateSwimmers();
+    updateEntities();
 
     requestAnimationFrame(render);
 }
 
 function clearRiver(){
     riverPath.length = 0;
-    swimmers.length = 0;
+    entities.length = 0;
     resetInputState();
 }
 
@@ -828,13 +1036,13 @@ function parseCommand(buffer){
 
     const word = match[1].toLowerCase();
     const count = parseInt(match[2],10);
+    const concept = resolveWordToConcept(word);
 
-    const type = wordMap[word];
-
-    if(!type) return null;
+    if(!concept) return null;
 
     return {
-        type,
+        word,
+        concept,
         count
     };
 }
@@ -849,7 +1057,11 @@ function handleTypedCommand(key){
         const command = parseCommand(typedBuffer);
 
         if(command){
-            addSwimmer(command.type, command.count);
+            addEntityFromConcept(
+                command.concept,
+                command.count,
+                command.word
+            );
         }
 
         typedBuffer = "";
@@ -860,8 +1072,8 @@ function handleTypedCommand(key){
 
     typedBuffer += key.toLowerCase();
 
-    if(typedBuffer.length > 24){
-        typedBuffer = typedBuffer.slice(-24);
+    if(typedBuffer.length > 28){
+        typedBuffer = typedBuffer.slice(-28);
     }
 }
 
